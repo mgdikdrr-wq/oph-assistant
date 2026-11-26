@@ -23,6 +23,8 @@
     };
   }
 
+  let cleanView = false;
+
   function renderList(root) {
     if (!OPH.session) { go('home'); return; }
     root.appendChild(OPH_HOME.topbar('ليستة العمليات الكبرى' + (OPH.session.surgeryDate ? ' — يوم ' + OPH.session.surgeryDate : '')));
@@ -33,9 +35,16 @@
 
     const bar = el('div', { class: 'listbar' }, [
       el('button', { class: 'iconbtn', text: '→ الرئيسية', onclick: () => go('home') }),
+      el('button', { class: 'btn small' + (cleanView ? '' : ' primary'), text: 'وضع التعديل', onclick: () => { cleanView = false; render(); } }),
+      el('button', { class: 'btn small' + (cleanView ? ' primary' : ''), text: 'عرض نظيف', onclick: () => { cleanView = true; render(); } }),
       el('button', { class: 'btn accent small', text: 'نُقلت الليستة للورق ✓', onclick: () => {
-        listPatients().forEach(p => { p.listTranscribed = true; savePatient(p); });
-        render(); toast('سُجلت كل الحالات كمنقولة للورق');
+        const incomplete = listPatients().filter(p => status(p) !== 'completed');
+        const mark = () => { listPatients().forEach(p => { p.listTranscribed = true; savePatient(p); }); render(); toast('سُجلت كل الحالات كمنقولة للورق'); };
+        if (incomplete.length) {
+          OPH_UTIL.confirmModal('حالات غير مكتملة', 'يوجد ' + incomplete.length + ' حالة غير مكتملة التحضير في الليستة — تسجيل الليستة كمنقولة الآن يعني نقل حالات ناقصة. متابعة؟', mark, 'متابعة');
+          return;
+        }
+        mark();
       } }),
       el('span', { class: 'spacer', style: 'flex:1' }),
       el('span', { text: 'الإجمالي: ' + listPatients().length })
@@ -48,7 +57,12 @@
     bar.appendChild(search);
     root.appendChild(bar);
 
-    const wrap = el('div', { class: 'listwrap' });
+    const incompleteN = listPatients().filter(p => status(p) !== 'completed').length;
+    if (incompleteN) {
+      root.appendChild(el('div', { class: 'warnbar', text: 'تنبيه: ' + incompleteN + ' حالة غير مكتملة التحضير (مظللة بالأصفر) — لا تُعتبر الليستة نهائية قبل مراجعتها واعتمادها.' }));
+    }
+
+    const wrap = el('div', { class: 'listwrap' + (cleanView ? ' clean' : '') });
     root.appendChild(wrap);
 
     const COLS = ['', 'No', 'Patient Name', 'Record No', 'Age', 'Medically', 'V/A', 'Diagnosis', 'Operation', 'HCV / HBV', 'IOL Power', 'توقيع الطبيب الجراح', 'توقيع طبيب التخدير', ''];
@@ -58,18 +72,23 @@
       const ps = listPatients();
       const table = el('table', { class: 'slist' });
       const trh = el('tr');
-      COLS.forEach(c => trh.appendChild(el('th', { text: c })));
+      COLS.forEach((c, ci) => {
+        if (cleanView && (ci === 0 || ci === COLS.length - 1)) return; // hide edit/action columns
+        trh.appendChild(el('th', { text: c }));
+      });
       table.appendChild(trh);
       ps.forEach((p, i) => {
         if (q && !(p.name.includes(q) || String(p.recordNo).includes(q))) return;
         const d = rowData(p);
         const st = status(p);
         const tr = el('tr', { class: (st !== 'completed' ? 'incomplete ' : '') + (p.listTranscribed ? 'transcribed' : '') });
-        // drag handle (move up/down for touch reliability)
-        const h = el('td');
-        h.appendChild(el('button', { class: 'rowhandle', text: '▲', onclick: () => move(p, -1) }));
-        h.appendChild(el('button', { class: 'rowhandle', text: '▼', onclick: () => move(p, 1) }));
-        tr.appendChild(h);
+        // drag handle (move up/down for touch reliability) — editing mode only
+        if (!cleanView) {
+          const h = el('td');
+          h.appendChild(el('button', { class: 'rowhandle', text: '▲', onclick: () => move(p, -1) }));
+          h.appendChild(el('button', { class: 'rowhandle', text: '▼', onclick: () => move(p, 1) }));
+          tr.appendChild(h);
+        }
         tr.appendChild(el('td', { class: 'en', text: String(i + 1) }));
         tr.appendChild(el('td', { class: 'ar', text: d.name || '—' }));
         tr.appendChild(el('td', { class: 'en', text: String(d.recordNo || '—') }));
@@ -82,10 +101,12 @@
         tr.appendChild(el('td', { class: 'en', text: d.iol || '—' }));
         tr.appendChild(el('td', { text: '' }));
         tr.appendChild(el('td', { text: '' }));
-        const act = el('td');
-        act.appendChild(el('button', { class: 'btn small ghost', text: 'فتح الشيت', onclick: () => { OPH_UTIL.selectPatient(p.id); go('patients'); } }));
-        act.appendChild(el('button', { class: 'btn small danger', text: 'إزالة', onclick: () => { p.inList = false; savePatient(p); render(); } }));
-        tr.appendChild(act);
+        if (!cleanView) {
+          const act = el('td');
+          act.appendChild(el('button', { class: 'btn small ghost', text: 'فتح الشيت', onclick: () => { OPH_UTIL.selectPatient(p.id); go('patients'); } }));
+          act.appendChild(el('button', { class: 'btn small danger', text: 'إزالة', onclick: () => { p.inList = false; savePatient(p); render(); } }));
+          tr.appendChild(act);
+        }
         table.appendChild(tr);
       });
       wrap.appendChild(table);
@@ -106,6 +127,8 @@
 
     draw('');
   }
+
+  window.OPH_SLIST_CLEAN = () => cleanView;
 
   window.OPH_SLIST = { render: renderList, listPatients, rowData };
 })();
