@@ -143,12 +143,18 @@
     return items;
   }
 
+  // Best recorded VA for an eye, always tagged with how it was measured
+  // (Aided / Unaided / Pinhole) so the surgical list never carries a bare number.
   function bestVA(p, eye) {
     const v = p.vision[eye.toLowerCase()];
     if (!v) return '';
-    let t = v.aided || v.unaided || '';
+    let t = '', kind = '';
+    if (v.aided) { t = v.aided; kind = 'Aided'; }
+    else if (v.unaided) { t = v.unaided; kind = 'Unaided'; }
+    else if (v.pinhole) { t = v.pinhole; kind = 'PH'; }
+    if (!t) return '';
     if (t === 'CF' && v.cfDist) t += ' ' + v.cfDist;
-    return t;
+    return t + ' (' + kind + ')';
   }
 
   function status(p) {
