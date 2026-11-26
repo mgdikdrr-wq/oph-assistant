@@ -50,9 +50,12 @@
     return Object.assign({}, OPH.settings, { _surgeryDate: OPH.session ? OPH.session.surgeryDate : '' });
   }
 
-  async function makeSheetPNG(p, dpi, type) {
-    const { svg, w, h } = OPH_SVG.sheetSVG(p, svgSettings());
-    return svgToImage(svg, w, h, dpi, type);
+  // A sheet may span several A4 pages (long content is paginated, never clipped).
+  async function makeSheetPNGs(p, dpi, type) {
+    const pages = OPH_SVG.sheetSVGAll(p, svgSettings());
+    const out = [];
+    for (const pg of pages) out.push(await svgToImage(pg.svg, pg.w, pg.h, dpi, type));
+    return out;
   }
   async function makeListPNGs(dpi, type) {
     const pages = OPH_SVG.listSVGs(OPH_SLIST.listPatients(), svgSettings());
@@ -68,9 +71,9 @@
       for (const b of await makeListPNGs(dpi, 'image/jpeg')) pngs.push({ b, orient: 'l' });
     }
     if (kind === 'sheets' || kind === 'all') {
-      for (const p of OPH.patients) pngs.push({ b: await makeSheetPNG(p, dpi, 'image/jpeg'), orient: 'p' });
+      for (const p of OPH.patients) for (const b of await makeSheetPNGs(p, dpi, 'image/jpeg')) pngs.push({ b, orient: 'p' });
     }
-    if (kind === 'sheet-one' && OPH.patient) pngs.push({ b: await makeSheetPNG(OPH.patient, dpi, 'image/jpeg'), orient: 'p' });
+    if (kind === 'sheet-one' && OPH.patient) for (const b of await makeSheetPNGs(OPH.patient, dpi, 'image/jpeg')) pngs.push({ b, orient: 'p' });
     if (!pngs.length) throw new Error('لا يوجد محتوى للتصدير');
     let doc = null;
     for (const { b, orient } of pngs) {
@@ -81,6 +84,18 @@
       doc.addImage(dataUrl, 'JPEG', 0, 0, pw, ph);
     }
     return doc.output('blob');
+  }
+
+  // Never export the list as final while listed cases are still incomplete (§9).
+  function guardList(fn) {
+    const incomplete = OPH.patients.filter(p => p.inList && OPH_DB.status(p) !== 'completed');
+    if (incomplete.length) {
+      OPH_UTIL.confirmModal('حالات غير مكتملة في الليستة',
+        'يوجد ' + incomplete.length + ' حالة غير مكتملة التحضير: ' + incomplete.map(p => p.name || 'بدون اسم').slice(0, 5).join('، ') + (incomplete.length > 5 ? '…' : '') + '. تصدير الليستة الآن يصدّر حالات ناقصة. متابعة على أي حال؟',
+        fn, 'متابعة التصدير');
+      return;
+    }
+    fn();
   }
 
   function renderExport(root) {
@@ -106,25 +121,28 @@
     const bcard = el('div', { class: 'home-card' }, [el('div', { class: 'home-buttons' }, [
       el('button', { class: 'btn primary', text: 'تصدير شيت المريض الحالي PNG', onclick: () => busy(async () => {
         if (!OPH.patient) throw new Error('لا يوجد مريض محدد');
-        const b = await makeSheetPNG(OPH.patient, +dpiSel.value, 'image/png');
-        download(b, 'sheet-' + (OPH.patient.recordNo || OPH.patient.caseNo) + '.png');
+        const bs = await makeSheetPNGs(OPH.patient, +dpiSel.value, 'image/png');
+        bs.forEach((b, i) => download(b, 'sheet-' + (OPH.patient.recordNo || OPH.patient.caseNo) + (bs.length > 1 ? '-p' + (i + 1) : '') + '.png'));
       }, 'الشيت') }),
       el('button', { class: 'btn primary', text: 'تصدير كل الشيتات PNG', onclick: () => busy(async () => {
-        for (const p of OPH.patients) download(await makeSheetPNG(p, +dpiSel.value, 'image/png'), 'sheet-' + (p.recordNo || p.caseNo) + '.png');
+        for (const p of OPH.patients) {
+          const bs = await makeSheetPNGs(p, +dpiSel.value, 'image/png');
+          bs.forEach((b, i) => download(b, 'sheet-' + (p.recordNo || p.caseNo) + (bs.length > 1 ? '-p' + (i + 1) : '') + '.png'));
+        }
       }, 'الشيتات') }),
-      el('button', { class: 'btn primary', text: 'تصدير الليستة PNG', onclick: () => busy(async () => {
+      el('button', { class: 'btn primary', text: 'تصدير الليستة PNG', onclick: () => guardList(() => busy(async () => {
         const bs = await makeListPNGs(+dpiSel.value, 'image/png');
         bs.forEach((b, i) => download(b, 'surgical-list-' + (i + 1) + '.png'));
-      }, 'الليستة') }),
-      el('button', { class: 'btn accent', text: 'PDF — الليستة فقط', onclick: () => busy(async () => {
+      }, 'الليستة')) }),
+      el('button', { class: 'btn accent', text: 'PDF — الليستة فقط', onclick: () => guardList(() => busy(async () => {
         download(await makePDF('list', +dpiSel.value), 'surgical-list.pdf');
-      }, 'PDF') }),
+      }, 'PDF')) }),
       el('button', { class: 'btn accent', text: 'PDF — كل الشيتات', onclick: () => busy(async () => {
         download(await makePDF('sheets', +dpiSel.value), 'sheets.pdf');
       }, 'PDF') }),
-      el('button', { class: 'btn accent', text: 'PDF واحد — الليستة + الشيتات', onclick: () => busy(async () => {
+      el('button', { class: 'btn accent', text: 'PDF واحد — الليستة + الشيتات', onclick: () => guardList(() => busy(async () => {
         download(await makePDF('all', +dpiSel.value), 'ophthalmology-' + (OPH.session.prepDate || '') + '.pdf');
-      }, 'PDF') }),
+      }, 'PDF')) }),
       el('button', { class: 'btn', text: 'معاينة شيت المريض الحالي', onclick: () => preview(OPH.patient) }),
       el('button', { class: 'btn ghost', text: 'طباعة (AirPrint)', onclick: () => window.print() })
     ])]);
@@ -142,15 +160,20 @@
 
     function preview(p) {
       if (!p) { toast('لا يوجد مريض محدد'); return; }
-      const { svg } = OPH_SVG.sheetSVG(p, svgSettings());
-      pv.innerHTML = '<h3>معاينة — ' + (p.name || '') + '</h3>';
+      const pages = OPH_SVG.sheetSVGAll(p, svgSettings());
+      pv.innerHTML = '';
+      pv.appendChild(el('h3', { text: 'معاينة — ' + (p.name || '') + (pages.length > 1 ? ' (' + pages.length + ' صفحات)' : '') }));
       const holder = el('div', { style: 'overflow:auto;max-height:70vh;background:#fff' });
-      holder.innerHTML = svg;
-      const svgEl = holder.querySelector('svg');
-      svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto';
+      pages.forEach(pg => {
+        const d = el('div', {});
+        d.innerHTML = pg.svg; // engine output: every dynamic string is esc()-escaped
+        const svgEl = d.querySelector('svg');
+        if (svgEl) { svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto'; }
+        holder.appendChild(d);
+      });
       pv.appendChild(holder);
     }
   }
 
-  window.OPH_EXPORT = { render: renderExport, svgToImage, makeSheetPNG, makeListPNGs, makePDF, svgSettings, download };
+  window.OPH_EXPORT = { render: renderExport, svgToImage, makeSheetPNGs, makeListPNGs, makePDF, svgSettings, download };
 })();
