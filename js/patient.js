@@ -1,11 +1,14 @@
 /* Patient split view: sidebar + tabs (details, history, exam, diagnosis, investigations, treatment, surgery). */
 (function () {
   const { $, el, esc, toast, confirmModal, savePatient, saveSession, addPatient, deletePatient, renumber, selectPatient, go, render, getOptions } = OPH_UTIL;
+  // Clinical edits revoke approval + transcription marks via surgery's guard (no-op unless approved/copied).
+  const editSave = (pp) => { if (window.OPH_SURGERY) OPH_SURGERY.markForReview(pp, 'تعديل بيانات مرتبطة بالاعتماد'); savePatient(pp); };
   const { status, bestVA } = OPH_DB;
   const { pickBox, composeLens, composeFindings } = OPH_UI;
   const D = OPH_DATA;
 
   const TABS = [
+    ['quick', 'فحص سريع'],
     ['details', 'بيانات المريض'],
     ['history', 'التاريخ المرضي'],
     ['exam', 'الفحص'],
@@ -101,12 +104,26 @@
   /* ---------- tab bar ---------- */
   function tabbar() {
     const bar = el('div', { class: 'tabs' });
+    // sidebar show/hide (mobile focus mode)
+    bar.appendChild(el('button', { class: 'navbtn', text: '☰', title: 'إظهار/إخفاء قائمة المرضى', onclick: () => {
+      const sb = document.querySelector('.sidebar'); if (sb) sb.classList.toggle('hidden');
+    } }));
     // prev/next quick navigation
     bar.appendChild(el('button', { class: 'tab', text: '⟶ السابق', onclick: () => step(-1) }));
     TABS.forEach(([k, label]) => {
       bar.appendChild(el('button', { class: 'tab' + (OPH.tab === k ? ' on' : ''), text: label, onclick: () => { OPH.tab = k; render(); } }));
     });
     bar.appendChild(el('button', { class: 'tab', text: 'التالي ⟵', onclick: () => step(1) }));
+    // workflow shortcuts
+    bar.appendChild(el('button', { class: 'tab', text: 'حفظ والتالي', title: 'Save & Next Patient', onclick: () => {
+      if (OPH.patient) savePatient(OPH.patient);
+      const i = OPH.patients.findIndex(x => OPH.patient && x.id === OPH.patient.id);
+      if (i >= 0 && i + 1 < OPH.patients.length) selectPatient(OPH.patients[i + 1].id);
+      else toast('هذا آخر مريض في الجلسة');
+    } }));
+    bar.appendChild(el('button', { class: 'tab', text: 'حفظ ومراجعة', title: 'Save & Review', onclick: () => {
+      if (OPH.patient) { savePatient(OPH.patient); OPH.tab = 'surgery'; render(); }
+    } }));
     return bar;
   }
   function step(dir) {
@@ -116,6 +133,7 @@
   }
 
   function renderTab(body, p) {
+    if (OPH.tab === 'quick') return OPH_QUICK.render(body, p);
     if (OPH.tab === 'details') tabDetails(body, p);
     else if (OPH.tab === 'history') tabHistory(body, p);
     else if (OPH.tab === 'exam') OPH_EXAM.render(body, p);
@@ -129,26 +147,26 @@
   function tabDetails(body, p) {
     const card = el('div', { class: 'card' }, [el('h3', { text: 'البيانات الأساسية' })]);
 
-    const name = input(p.name, v => { p.name = v; savePatient(p); }, 'الاسم الرباعي');
-    const rec = input(p.recordNo, v => { p.recordNo = v; savePatient(p); checkDupRec(p); }, 'رقم الملف', 'text');
+    const name = input(p.name, v => { p.name = v; editSave(p); }, 'الاسم الرباعي');
+    const rec = input(p.recordNo, v => { p.recordNo = v; editSave(p); checkDupRec(p); }, 'رقم الملف', 'text');
     rec.inputMode = 'numeric'; rec.dir = 'ltr';
-    const age = input(p.age, v => { p.age = v; savePatient(p); }, 'السن', 'number');
+    const age = input(p.age, v => { p.age = v; editSave(p); }, 'السن', 'number');
     age.inputMode = 'numeric';
-    const date = input(p.date, v => { p.date = v; savePatient(p); }, '', 'date');
-    const time = input(p.time, v => { p.time = v; savePatient(p); }, '', 'time');
+    const date = input(p.date, v => { p.date = v; editSave(p); }, '', 'date');
+    const time = input(p.time, v => { p.time = v; editSave(p); }, '', 'time');
 
     card.appendChild(row([field('الاسم الرباعي', name), field('رقم الملف Record No.', rec), field('السن', age)]));
     card.appendChild(row([field('التاريخ Date', date), field('الوقت Time', time)]));
 
     const gWrap = el('div', { class: 'chips' });
     [['M', 'Male — ذكر'], ['F', 'Female — أنثى']].forEach(([v, l]) => {
-      gWrap.appendChild(el('button', { class: 'chip' + (p.gender === v ? ' on' : ''), text: l, onclick: () => { p.gender = v; savePatient(p); render(); } }));
+      gWrap.appendChild(el('button', { class: 'chip' + (p.gender === v ? ' on' : ''), text: l, onclick: () => { p.gender = v; editSave(p); render(); } }));
     });
     card.appendChild(row([field('النوع Gender', gWrap)]));
 
     const vWrap = el('div', { class: 'chips' });
     [['first', 'First visit — أول زيارة'], ['followup', 'Follow-up — متابعة']].forEach(([v, l]) => {
-      vWrap.appendChild(el('button', { class: 'chip' + (p.visitType === v ? ' on' : ''), text: l, onclick: () => { p.visitType = v; savePatient(p); render(); } }));
+      vWrap.appendChild(el('button', { class: 'chip' + (p.visitType === v ? ' on' : ''), text: l, onclick: () => { p.visitType = v; editSave(p); render(); } }));
     });
     card.appendChild(row([field('نوع الزيارة', vWrap)]));
     body.appendChild(card);
@@ -165,19 +183,19 @@
     // Complaint
     const cCard = el('div', { class: 'card' }, [el('h3', { text: 'الشكوى Complaint' })]);
     cCard.appendChild(pickBox({
-      listKey: 'complaint', selected: p.complaint.items, onChange: sel => { p.complaint.items = sel; savePatient(p); }
+      listKey: 'complaint', selected: p.complaint.items, onChange: sel => { p.complaint.items = sel; editSave(p); }
     }));
     const eyeChips = el('div', { class: 'chips' });
-    D.COMPLAINT_EYES.forEach(e => eyeChips.appendChild(el('button', { class: 'chip en' + (p.complaint.eye === e ? ' on' : ''), text: e, onclick: () => { p.complaint.eye = p.complaint.eye === e ? '' : e; savePatient(p); render(); } })));
-    const dur = input(p.complaint.duration, v => { p.complaint.duration = v; savePatient(p); }, 'مثل: 6 months');
+    D.COMPLAINT_EYES.forEach(e => eyeChips.appendChild(el('button', { class: 'chip en' + (p.complaint.eye === e ? ' on' : ''), text: e, onclick: () => { p.complaint.eye = p.complaint.eye === e ? '' : e; editSave(p); render(); } })));
+    const dur = input(p.complaint.duration, v => { p.complaint.duration = v; editSave(p); }, 'مثل: 6 months');
     const onsetChips = el('div', { class: 'chips' });
-    D.ONSET.forEach(o => onsetChips.appendChild(el('button', { class: 'chip en' + (p.complaint.onset === o ? ' on' : ''), text: o, onclick: () => { p.complaint.onset = p.complaint.onset === o ? '' : o; savePatient(p); render(); } })));
+    D.ONSET.forEach(o => onsetChips.appendChild(el('button', { class: 'chip en' + (p.complaint.onset === o ? ' on' : ''), text: o, onclick: () => { p.complaint.onset = p.complaint.onset === o ? '' : o; editSave(p); render(); } })));
     const progChips = el('div', { class: 'chips' });
-    D.PROGRESSION.forEach(o => progChips.appendChild(el('button', { class: 'chip en' + (p.complaint.progression === o ? ' on' : ''), text: o, onclick: () => { p.complaint.progression = p.complaint.progression === o ? '' : o; savePatient(p); render(); } })));
+    D.PROGRESSION.forEach(o => progChips.appendChild(el('button', { class: 'chip en' + (p.complaint.progression === o ? ' on' : ''), text: o, onclick: () => { p.complaint.progression = p.complaint.progression === o ? '' : o; editSave(p); render(); } })));
     cCard.appendChild(row([field('العين', eyeChips), field('المدة Duration', dur)]));
     cCard.appendChild(row([field('البداية Onset', onsetChips), field('المسار Progression', progChips)]));
     const notes = el('textarea', { rows: 2, style: 'width:100%' }); notes.value = p.complaint.notes;
-    notes.addEventListener('input', () => { p.complaint.notes = notes.value; savePatient(p); });
+    notes.addEventListener('input', () => { p.complaint.notes = notes.value; editSave(p); });
     cCard.appendChild(field('كتابة حرة', notes));
     body.appendChild(cCard);
 
@@ -186,7 +204,7 @@
     p.pastHistory.forEach((h, i) => {
       phCard.appendChild(el('div', { class: 'frow' }, [
         el('span', { class: 'en', style: 'flex:1;font-weight:600', text: h.item + (h.eye ? ' — ' + h.eye : '') + (h.date ? ' — ' + h.date : '') + (h.details ? ' — ' + h.details : '') }),
-        el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.pastHistory.splice(i, 1); savePatient(p); render(); } })
+        el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.pastHistory.splice(i, 1); editSave(p); render(); } })
       ]));
     });
     const selItem = el('select'); getOptions('pastHistory').forEach(o => selItem.appendChild(el('option', { text: o, value: o })));
@@ -194,7 +212,7 @@
     const inDate = el('input', { type: 'month' });
     const inDet = el('input', { type: 'text', placeholder: 'تفاصيل' });
     phCard.appendChild(el('div', { class: 'frow' }, [selItem, selEye, inDate, inDet,
-      el('button', { class: 'btn small primary', text: '+ إضافة', onclick: () => { p.pastHistory.push({ item: selItem.value, eye: selEye.value, date: inDate.value, details: inDet.value.trim() }); savePatient(p); render(); } })
+      el('button', { class: 'btn small primary', text: '+ إضافة', onclick: () => { p.pastHistory.push({ item: selItem.value, eye: selEye.value, date: inDate.value, details: inDet.value.trim() }); editSave(p); render(); } })
     ]));
     body.appendChild(phCard);
 
@@ -203,7 +221,7 @@
     const chips = el('div', { class: 'chips' });
     const freeBtn = el('button', {
       class: 'chip en' + (p.systemic.includes('Free') ? ' on' : ''), text: 'Free — سليم', onclick: () => {
-        p.systemic = p.systemic.includes('Free') ? [] : ['Free']; savePatient(p); render();
+        p.systemic = p.systemic.includes('Free') ? [] : ['Free']; editSave(p); render();
       }
     });
     chips.appendChild(freeBtn);
@@ -212,7 +230,7 @@
         class: 'chip en' + (p.systemic.includes(o) ? ' on' : ''), text: o, onclick: () => {
           if (p.systemic.includes(o)) p.systemic = p.systemic.filter(x => x !== o);
           else { p.systemic = p.systemic.filter(x => x !== 'Free'); p.systemic.push(o); }
-          savePatient(p); render();
+          editSave(p); render();
         }
       }));
     });
@@ -228,7 +246,7 @@
       p.diagnoses[k].forEach((d, i) => {
         card.appendChild(el('div', { class: 'frow' }, [
           el('span', { class: 'en', style: 'flex:1;font-weight:600', text: d }),
-          el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.diagnoses[k].splice(i, 1); savePatient(p); render(); } })
+          el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.diagnoses[k].splice(i, 1); editSave(p); render(); } })
         ]));
       });
       const inp = el('input', { class: 'en', type: 'text', placeholder: 'اكتب أو اختر تشخيصًا…', list: 'dx-' + k });
@@ -237,7 +255,7 @@
       card.appendChild(el('div', { class: 'frow' }, [inp, dl, el('button', {
         class: 'btn small primary', text: '+ إضافة', onclick: () => {
           const v = inp.value.trim(); if (!v) return;
-          p.diagnoses[k].push(v); savePatient(p); render();
+          p.diagnoses[k].push(v); editSave(p); render();
         }
       })]));
       body.appendChild(card);
@@ -246,7 +264,7 @@
     // suggested diagnosis text (doctor reviews/edits)
     const sCard = el('div', { class: 'card' }, [el('h3', { text: 'نص التشخيص المختصر (قابل للتعديل والاعتماد)' })]);
     const sugg = el('textarea', { rows: 2, style: 'width:100%', class: 'en' }); sugg.value = p.diagnoses.suggested || '';
-    sugg.addEventListener('input', () => { p.diagnoses.suggested = sugg.value; savePatient(p); });
+    sugg.addEventListener('input', () => { p.diagnoses.suggested = sugg.value; editSave(p); });
     sCard.appendChild(sugg);
     sCard.appendChild(el('button', {
       class: 'btn small ghost', text: 'اقتراح من نتائج الفحص (مراجعة يدوية)', onclick: () => {
@@ -255,7 +273,7 @@
           const lens = composeLens(p.exam[e].lens.findings);
           if (lens) parts.push(e.toUpperCase() + ': ' + lens);
         });
-        sugg.value = parts.join(' | '); p.diagnoses.suggested = sugg.value; savePatient(p);
+        sugg.value = parts.join(' | '); p.diagnoses.suggested = sugg.value; editSave(p);
         toast('راجع النص وعدّله قبل الاعتماد');
       }
     }));
@@ -269,21 +287,21 @@
       p.investigations[k].forEach((r, i) => {
         card.appendChild(el('div', { class: 'frow' }, [
           el('span', { class: 'en', style: 'flex:1;font-weight:600', text: r.item + (r.result ? ' — ' + r.result : '') }),
-          el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.investigations[k].splice(i, 1); savePatient(p); render(); } })
+          el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.investigations[k].splice(i, 1); editSave(p); render(); } })
         ]));
       });
       const sel = el('select'); getOptions('investigations').forEach(o => sel.appendChild(el('option', { text: o, value: o })));
       const res = el('input', { class: 'en', type: 'text', placeholder: k === 'results' ? 'النتيجة' : 'ملاحظة (اختياري)' });
       card.appendChild(el('div', { class: 'frow' }, [sel, res, el('button', {
         class: 'btn small primary', text: '+ إضافة', onclick: () => {
-          p.investigations[k].push({ item: sel.value, result: res.value.trim() }); savePatient(p); render();
+          p.investigations[k].push({ item: sel.value, result: res.value.trim() }); editSave(p); render();
         }
       })]));
       body.appendChild(card);
     });
     const nCard = el('div', { class: 'card' }, [el('h3', { text: 'ملاحظات الفحوصات' })]);
     const n = el('textarea', { rows: 2, style: 'width:100%' }); n.value = p.investigations.notes;
-    n.addEventListener('input', () => { p.investigations.notes = n.value; savePatient(p); });
+    n.addEventListener('input', () => { p.investigations.notes = n.value; editSave(p); });
     nCard.appendChild(n);
     body.appendChild(nCard);
 
@@ -292,9 +310,9 @@
     const grid = el('div', { class: 'eyegrid' });
     [['od', 'Right Eye — OD'], ['os', 'Left Eye — OS']].forEach(([e, label]) => {
       const b = p.biometry[e];
-      const col = el('div', { class: 'eyecol' }, [el('h4', { class: 'en', text: label })]);
+      const col = el('div', { class: 'eyecol ' + e }, [el('h4', { class: 'en', text: label })]);
       const mk = (lab, key, ph) => {
-        const i = input(b[key], v => { b[key] = v; savePatient(p); }, ph || '', 'text');
+        const i = input(b[key], v => { b[key] = v; editSave(p); }, ph || '', 'text');
         i.inputMode = 'decimal'; i.dir = 'ltr';
         return field(lab, i);
       };
@@ -302,7 +320,7 @@
       col.appendChild(row([mk('ACD', 'acd'), mk('IOL Power', 'iolPower', '+21.5'), mk('Target Ref.', 'targetRef')]));
       col.appendChild(row([mk('IOL Model', 'iolModel')]));
       const nt = el('textarea', { rows: 1, style: 'width:100%' }); nt.value = b.notes;
-      nt.addEventListener('input', () => { b.notes = nt.value; savePatient(p); });
+      nt.addEventListener('input', () => { b.notes = nt.value; editSave(p); });
       col.appendChild(field('ملاحظات', nt));
       grid.appendChild(col);
     });
@@ -317,7 +335,7 @@
       p.treatment[k].forEach((t, i) => {
         card.appendChild(el('div', { class: 'frow' }, [
           el('span', { class: 'en', style: 'flex:1;font-weight:600', text: [t.drug, t.eye, t.freq, t.duration, t.notes].filter(Boolean).join(' — ') }),
-          el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.treatment[k].splice(i, 1); savePatient(p); render(); } })
+          el('button', { class: 'btn small danger', text: 'حذف', onclick: () => { p.treatment[k].splice(i, 1); editSave(p); render(); } })
         ]));
       });
       const drug = el('input', { class: 'en', type: 'text', placeholder: 'اسم الدواء', list: 'favdrugs' });
@@ -331,7 +349,7 @@
           const v = drug.value.trim(); if (!v) return;
           p.treatment[k].push({ drug: v, eye: eye.value, freq: freq.value.trim(), duration: dur.value.trim(), notes: '' });
           if (!(OPH.settings.favoriteDrugs || []).includes(v)) { OPH.settings.favoriteDrugs = (OPH.settings.favoriteDrugs || []).concat([v]); OPH_UTIL.saveSettings(); }
-          savePatient(p); render();
+          editSave(p); render();
         }
       })]));
       body.appendChild(card);
