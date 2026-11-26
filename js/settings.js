@@ -44,6 +44,22 @@
       S.passcodeHash ? el('button', { class: 'btn small danger', text: 'إزالة رمز القفل', onclick: () => confirmModal('إزالة رمز القفل', 'سيفتح التطبيق بدون رمز. متابعة؟', () => { S.passcodeHash = ''; saveSettings(); render(); }, 'إزالة') }) : null
     ]));
     prCard.appendChild(el('p', { style: 'color:var(--muted);font-size:.85em', text: 'ملاحظة: Face ID / Touch ID غير متاح لتطبيقات الويب — يستخدم التطبيق رمز قفل رقمي. البيانات لا تغادر الجهاز إطلاقًا.' }));
+
+    // live persistent-storage status (browser may evict non-persistent data under pressure)
+    const psLine = el('p', { style: 'font-size:.9em', text: 'التخزين الدائم: جارٍ الفحص…' });
+    prCard.appendChild(psLine);
+    if (navigator.storage && navigator.storage.persisted) {
+      Promise.all([navigator.storage.persisted(), navigator.storage.estimate ? navigator.storage.estimate() : Promise.resolve({})]).then(([ok, est]) => {
+        const mb = est && est.usage ? ' — المساحة المستخدمة تقريبًا ' + (est.usage / 1048576).toFixed(1) + ' ميجا' : '';
+        psLine.textContent = ok
+          ? '✅ التخزين الدائم: مفعّل — المتصفح لن يحذف بيانات التطبيق تلقائيًا' + mb
+          : '⚠️ التخزين الدائم: غير مفعّل — المتصفح قد يحذف البيانات عند ضغط المساحة. ثبّت التطبيق على الشاشة الرئيسية وافتحه دوريًا' + mb;
+        psLine.style.color = ok ? 'var(--ok,#1a7f37)' : '#b26a00';
+        if (!ok && navigator.storage.persist) navigator.storage.persist();
+      });
+    } else {
+      psLine.textContent = 'التخزين الدائم: المتصفح لا يدعم الفحص';
+    }
     wrap.appendChild(prCard);
 
     // option lists editor
