@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<!-- CSP: fully offline app — no external connections, no remote scripts/styles/fonts -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <title>My Ophthalmology Assistant</title>
 <meta name="description" content="مساعد طبيب العيون لتحضير العمليات الجراحية — يعمل بدون إنترنت">
 <meta name="theme-color" content="#1d4e89">
@@ -27,6 +29,7 @@
 <script src="js/ui.js"></script>
 <script src="js/home.js"></script>
 <script src="js/patient.js"></script>
+<script src="js/quick.js"></script>
 <script src="js/exam.js"></script>
 <script src="js/surgery.js"></script>
 <script src="js/slist.js"></script>
@@ -35,10 +38,6 @@
 <script src="js/transcribe.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/lock.js"></script>
-<script>
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(function () {});
-}
-</script>
+<script src="js/sw-register.js"></script>
 </body>
 </html>
