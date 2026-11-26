@@ -1,7 +1,7 @@
 /* Surgical Preparation tab: operation, operative eye, viral markers, review & approval.
    Error-prevention per directive §18: operative-eye data only, re-review on change. */
 (function () {
-  const { el, toast, confirmModal, savePatient, render, getOptions } = OPH_UTIL;
+  const { el, toast, confirmModal, savePatient, saveSession, render, getOptions } = OPH_UTIL;
   const { checklist, bestVA, status } = OPH_DB;
   const { field } = OPH_BUILD;
   const D = OPH_DATA;
@@ -51,20 +51,20 @@
       const pullCard = el('div', { class: 'card' }, [el('h3', { text: 'البيانات المسحوبة من العين ' + s.eye + ' فقط' })]);
       const vaIn = el('input', { class: 'en', type: 'text', placeholder: 'V/A للعين ' + s.eye });
       vaIn.value = s.vaText || va;
-      vaIn.addEventListener('input', () => { s.vaText = vaIn.value; savePatient(p); refreshReview(p); });
+      vaIn.addEventListener('input', () => { markForReview(p, 'تعديل V/A المعتمد'); s.vaText = vaIn.value; savePatient(p); refreshReview(p); });
       pullCard.appendChild(field('حدة الإبصار V/A (' + s.eye + ')', vaIn));
 
       const dxIn = el('input', { class: 'en', type: 'text', placeholder: 'التشخيص', list: 'surg-dx' });
       dxIn.value = s.diagnosisText || dxList[0] || p.diagnoses.suggested || '';
       const dl = el('datalist', { id: 'surg-dx' });
       dxList.concat(p.diagnoses.suggested ? [p.diagnoses.suggested] : []).forEach(d => dl.appendChild(el('option', { value: d })));
-      dxIn.addEventListener('input', () => { s.diagnosisText = dxIn.value; savePatient(p); refreshReview(p); });
+      dxIn.addEventListener('input', () => { markForReview(p, 'تعديل التشخيص المعتمد'); s.diagnosisText = dxIn.value; savePatient(p); refreshReview(p); });
       pullCard.appendChild(field('التشخيص', dxIn)); pullCard.appendChild(dl);
 
       if (s.operation === 'Phaco') {
         const iolIn = el('input', { class: 'en', type: 'text', inputmode: 'decimal', placeholder: '+21.5' });
         iolIn.value = s.iolPower || iol;
-        iolIn.addEventListener('input', () => { s.iolPower = iolIn.value; savePatient(p); refreshReview(p); });
+        iolIn.addEventListener('input', () => { markForReview(p, 'تعديل IOL المعتمد'); s.iolPower = iolIn.value; savePatient(p); refreshReview(p); });
         pullCard.appendChild(field('IOL Power للعين ' + s.eye + ' (من Biometry)', iolIn));
       }
       body.appendChild(card);
@@ -80,6 +80,7 @@
       D.VIRAL_OPTIONS.forEach(o => {
         chips.appendChild(el('button', {
           class: 'chip en' + (s[k] === o ? ' on' : ''), text: o, onclick: () => {
+            markForReview(p, 'تعديل التحاليل الفيروسية');
             s[k] = s[k] === o ? '' : o; savePatient(p); render();
           }
         }));
@@ -107,13 +108,19 @@
     rv.appendChild(reviewCard(p));
   }
 
+  // Any edit to approval-linked data revokes the approval AND the paper-transcription
+  // marks, so an approved/copied sheet can never silently diverge from the data.
   function markForReview(p, why) {
-    if (p.reviewApproved) {
-      p.needsReview = true; p.reviewApproved = false;
-      if (p.sheetTranscribed || p.listTranscribed) {
-        toast('تنبيه: ' + why + ' وقد نُقلت الحالة للورق بالفعل — يلزم إعادة النقل بعد المراجعة.');
-      }
-    }
+    const wasApproved = !!p.reviewApproved;
+    const wasCopied = !!(p.sheetTranscribed || p.listTranscribed);
+    if (!wasApproved && !wasCopied) return;
+    if (wasApproved) { p.needsReview = true; p.reviewApproved = false; }
+    if (p.sheetTranscribed) p.sheetTranscribed = false;
+    if (p.listTranscribed) p.listTranscribed = false;
+    let msg = 'تنبيه: ' + why;
+    if (wasApproved) msg += ' — أُلغي الاعتماد ويلزم إعادة المراجعة';
+    if (wasCopied) msg += (wasApproved ? '،' : ' —') + ' وأُلغيت علامة النقل للورق ويلزم إعادة النقل';
+    toast(msg + '.');
   }
 
   /* ---------- review & approval ---------- */
@@ -140,6 +147,7 @@
       onclick: () => {
         p.reviewApproved = true; p.needsReview = false; savePatient(p); refreshReview(p);
         toast('اعتُمدت الحالة كمكتملة التحضير');
+        maybeNudgeBackup(p);
       }
     }));
     if (!p.inList) {
@@ -158,6 +166,21 @@
     }
     card.appendChild(row2);
     return card;
+  }
+
+  // After the last listed case in a session gets approved, nudge for an encrypted backup (once per session).
+  function maybeNudgeBackup(p) {
+    const sess = OPH.session;
+    if (!sess || sess.backupNudged) return;
+    if (!p.inList) return; // completion is about listed cases
+    const listed = OPH.patients.filter(x => x.inList);
+    if (!listed.length) return;
+    const pending = listed.filter(x => !(x.reviewApproved && !x.needsReview));
+    if (pending.length) return;
+    sess.backupNudged = true; saveSession(sess);
+    confirmModal('اكتملت جلسة التحضير',
+      'كل حالات الليستة (' + listed.length + ') معتمدة. يُنصح بتصدير نسخة احتياطية مشفرة الآن حتى لا تضيع البيانات.',
+      () => { if (window.OPH_BACKUP) OPH_BACKUP.exportBackup(); }, 'تصدير نسخة الآن');
   }
 
   window.OPH_SURGERY = { render: renderSurgery, markForReview };
