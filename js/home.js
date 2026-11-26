@@ -36,19 +36,42 @@
         counter(c.completed, 'مكتملة التحضير', 'ok'),
         counter(c.incomplete, 'غير مكتملة', 'bad'),
         counter(c.transcribed, 'نُقلت للورق', 'done')
-      ])
+      ]),
+      (() => {
+        // prep progress bar (approved of total) + transcription progress
+        const pct = c.total ? Math.round(c.completed / c.total * 100) : 0;
+        const tpct = c.total ? Math.round(c.transcribed / c.total * 100) : 0;
+        const frag = el('div', {});
+        if (c.total) {
+          frag.appendChild(el('div', { class: 'progress' }, [el('div', { class: 'fill', style: 'width:' + pct + '%' })]));
+          frag.appendChild(el('div', { class: 'progress-label' }, [
+            el('span', { text: 'إنجاز التحضير: ' + c.completed + ' / ' + c.total + ' (' + pct + '%)' }),
+            el('span', { text: 'النقل للورق: ' + tpct + '%' })
+          ]));
+        }
+        // operation distribution among listed cases
+        const dist = {};
+        OPH.patients.forEach(p => { if (p.inList && p.surgery.operation) dist[p.surgery.operation] = (dist[p.surgery.operation] || 0) + 1; });
+        const keys = Object.keys(dist);
+        if (keys.length) {
+          frag.appendChild(el('div', { class: 'opdist' }, keys.map(k =>
+            el('span', { class: 'badge done en', text: k + ': ' + dist[k] }))));
+        }
+        return frag;
+      })()
     ]);
 
     const btns = el('div', { class: 'home-card' }, [
       el('div', { class: 'home-buttons' }, [
-        el('button', { class: 'btn primary', text: 'جلسة تحضير جديدة', onclick: newSessionModal }),
-        el('button', { class: 'btn primary', text: 'إضافة مريض', onclick: async () => { const p = await addPatient(); if (!p) newSessionModal(); } }),
-        el('button', { class: 'btn', text: 'شيتات العيون', onclick: () => go('patients') }),
-        el('button', { class: 'btn', text: 'ليستة العمليات', onclick: () => go('list') }),
-        el('button', { class: 'btn accent', text: 'وضع نقل البيانات', onclick: () => go('transcribe') }),
-        el('button', { class: 'btn', text: 'تصدير', onclick: () => go('export') }),
-        el('button', { class: 'btn', text: 'الجلسات السابقة', onclick: () => go('sessions') }),
-        el('button', { class: 'btn ghost', text: 'الإعدادات', onclick: () => go('settings') })
+        el('button', { class: 'btn primary', onclick: newSessionModal }, [OPH_UI.icon('calendar'), 'جلسة تحضير جديدة']),
+        el('button', { class: 'btn primary', onclick: async () => { const p = await addPatient(); if (!p) newSessionModal(); } }, [OPH_UI.icon('userplus'), 'إضافة مريض']),
+        el('button', { class: 'btn accent', onclick: () => { OPH.tab = 'quick'; go('patients'); } }, [OPH_UI.icon('zap'), 'فحص سريع']),
+        el('button', { class: 'btn', onclick: () => go('patients') }, [OPH_UI.icon('eye'), 'شيتات العيون']),
+        el('button', { class: 'btn', onclick: () => go('list') }, [OPH_UI.icon('list'), 'ليستة العمليات']),
+        el('button', { class: 'btn accent', onclick: () => go('transcribe') }, [OPH_UI.icon('clipboard'), 'وضع نقل البيانات']),
+        el('button', { class: 'btn', onclick: () => go('export') }, [OPH_UI.icon('download'), 'تصدير']),
+        el('button', { class: 'btn', onclick: () => go('sessions') }, [OPH_UI.icon('clock'), 'الجلسات السابقة']),
+        el('button', { class: 'btn ghost', onclick: () => go('settings') }, [OPH_UI.icon('sliders'), 'الإعدادات'])
       ])
     ]);
 
@@ -68,7 +91,7 @@
     return el('div', { class: 'topbar' }, [
       el('span', { class: 'title', text: title }),
       el('span', { class: 'spacer' }),
-      el('button', { class: 'iconbtn', text: '🔒 قفل', onclick: () => window.OPH_LOCK && OPH_LOCK.lockNow() })
+      el('button', { class: 'iconbtn', onclick: () => window.OPH_LOCK && OPH_LOCK.lockNow() }, [OPH_UI.icon('lock'), 'قفل'])
     ]);
   }
 
@@ -85,8 +108,12 @@
       el('div', { class: 'actions' }, [
         el('button', {
           class: 'btn primary', text: 'إنشاء', onclick: () => {
-            bg.remove();
-            createSession(inPrep.value, inSurg.value, inTitle.value.trim());
+            const make = () => { bg.remove(); createSession(inPrep.value, inSurg.value, inTitle.value.trim()); };
+            if (inSurg.value && inPrep.value && inSurg.value < inPrep.value) {
+              confirmModal('تنبيه التواريخ', 'تاريخ العمليات (' + inSurg.value + ') قبل تاريخ التحضير (' + inPrep.value + '). مقصود لو كانت جلسة قديمة تُسجل بأثر رجعي — إنشاء على أي حال؟', make, 'إنشاء');
+              return;
+            }
+            make();
           }
         }),
         el('button', { class: 'btn ghost', text: 'إلغاء', onclick: () => bg.remove() })
