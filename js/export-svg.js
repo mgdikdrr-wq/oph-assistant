@@ -58,11 +58,37 @@
   function line(x1, y1, x2, y2, sw) { return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#111" stroke-width="${sw || 3}"/>`; }
 
   /* ================= Ophthalmology Sheet (A4 portrait) ================= */
-  function sheetSVG(p, settings) {
+  // Back-compat: first page of the sheet. Full page set via sheetSVGAll.
+  function sheetSVG(p, settings) { return sheetSVGAll(p, settings)[0]; }
+
+  // Long sheets shrink to fit one page while readable (k >= 0.55); beyond that
+  // they continue onto extra A4 pages. Long medical text is never clipped.
+  function sheetSVGAll(p, settings) {
+    const W = A4P.w, H = A4P.h, M = 90, usable = H - 110;
+    const built = buildContent(p, settings);
+    let k = 1;
+    if (built.endY > usable) k = Math.max(0.55, usable / built.endY);
+    const nPages = Math.max(1, Math.ceil(built.endY * k / usable));
+    const pages = [];
+    for (let i = 0; i < nPages; i++) {
+      let s = svgOpen(W, H);
+      s += rect(0, 0, W, H, { fill: '#fff', stroke: 'none' });
+      s += '<clipPath id="pgclip"><rect x="0" y="0" width="' + W + '" height="' + usable + '"/></clipPath>';
+      s += '<g clip-path="url(#pgclip)"><g transform="translate(0 ' + (-i * usable) + ') scale(' + k + ')">';
+      s += built.content;
+      s += '</g></g>';
+      s += text(W - M, H - 60, 'مطابع وزارة الصحة والسكان', 32, { anchor: 'end', fill: '#666' });
+      if (nPages > 1) s += text(M, H - 60, 'صفحة ' + (i + 1) + ' / ' + nPages, 34, { fill: '#666' });
+      s += '</svg>';
+      pages.push({ svg: s, w: W, h: H, endY: built.endY, k: k, pageCount: nPages });
+    }
+    return pages;
+  }
+
+  function buildContent(p, settings) {
     const W = A4P.w, M = 90; // margin
     const FS = 46, FSS = 40;
-    let s = svgOpen(W, A4P.h);
-    s += rect(0, 0, W, A4P.h, { fill: '#fff', stroke: 'none' });
+    let s = '';
     let y = M + 30;
 
     // header block (RTL, right-aligned)
@@ -221,9 +247,7 @@
 
     // signature (left empty)
     s += text(M, y + 30, 'Signature : ...............................................', FSS);
-    s += text(W - M, A4P.h - 60, 'مطابع وزارة الصحة والسكان', FSS - 8, { anchor: 'end', fill: '#666' });
-    s += '</svg>';
-    return { svg: s, w: W, h: A4P.h };
+    return { content: s, endY: y + 90 };
   }
 
   /* ================= Surgical List (A4 landscape, paginated) ================= */
@@ -311,10 +335,11 @@
         y += rh; no++;
       });
       s += text(M, H - 40, 'صفحة ' + (pages.indexOf(pageRows) + 1) + ' / ' + pages.length, FSS - 6, { fill: '#666' });
+      s += text(W - M, H - 40, 'مطابع وزارة الصحة والسكان', FSS - 6, { anchor: 'end', fill: '#666' });
       s += '</svg>';
       return { svg: s, w: W, h: H };
     });
   }
 
-  window.OPH_SVG = { sheetSVG, listSVGs, A4P, A4L };
+  window.OPH_SVG = { sheetSVG, sheetSVGAll, listSVGs, A4P, A4L };
 })();
